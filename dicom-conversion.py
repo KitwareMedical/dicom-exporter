@@ -1,6 +1,8 @@
 from os import path
+import gzip
 import sys
 import itk
+import shutil
 import numpy
 import vtk
 
@@ -12,13 +14,14 @@ from itk_utils import convertITKTypeToVTKType, getMetadata, getMetadataList
 # from helpers.volume import VolumeData
 
 
-def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path, blockSize=50 * 1024 * 1024,
-                                windowing=None):
+def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
+                                overwrite=False,
+                                compress=True, blockSize=50 * 1024 * 1024):
     """
     Converts DICOM files in a directory into a VTK file (.vti or .vtkjs)
     """
     # Test output_file_path #
-    if path.exists(output_file_path):
+    if not overwrite and path.exists(output_file_path):
         print('Output file already exist', output_file_path)
         return False, None
 
@@ -53,6 +56,9 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path, blockSize=50 
     spacingXY = getMetadataList(itkReader, '0028|0030', float)
     orientation = getMetadataList(itkReader, '0020|0037', float)
     position = getMetadataList(itkReader, '0020|0032', float)
+    window_width = getMetadata(itkReader, '0028|1051', float)
+    window_center = getMetadata(itkReader, '0028|1050', float)
+    print("w: {}, c: {}".format(window_width, window_center))
 
     # Compute spacing #
     if spacingBetweenSlices and spacingXY:
@@ -135,8 +141,9 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path, blockSize=50 
     if file_extension == '.vti':
         writer = vtk.vtkXMLImageDataWriter()
         writer.SetDataModeToBinary()
-        writer.SetCompressorTypeToZLib()
-        writer.SetBlockSize(blockSize)
+        if compress:
+            writer.SetCompressorTypeToZLib()
+            writer.SetBlockSize(blockSize)
     else:
         writer = vtk.vtkJSONDataSetWriter()
 
@@ -148,11 +155,16 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path, blockSize=50 
     # Write file #
     writer.Write()
 
-    # retrieve coordinate of first non empty slices
-    scalarRange = None
-    if windowing is not None:
-        halfWindow = windowing["window"] / 2.0
-        scalarRange = (windowing["level"] - halfWindow, windowing["level"] + halfWindow)
+    if compress and file_extension != '.vti':
+        data_path = os.path.join(output_file_path, 'data')
+        for _, _, f in os.walk(data_path):
+            for file in f:
+                full_path = os.path.join(data_path, file)
+                with open(full_path, 'rb') as f_in, gzip.open(full_path + '.gz', 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+                    f_in.close()
+                    f_out.close()
+                    os.replace(full_path + '.gz', full_path)
 
     return True
 
@@ -162,12 +174,15 @@ if __name__ == '__main__':
     """
     Script entry point
     """
+    import argparse
+    import os
 
-    if len(sys.argv) != 3:
-        print('Usage:', sys.argv[0], '<DICOM file path> <output VTI file path>')
-        exitCode = 1
-    else:
-        convertDICOMVolumeToVTKFile(*sys.argv[1:])
-        exitCode = 0
+    parser = argparse.ArgumentParser()
+    parser.add_argument("DICOM", help="a directory containing DICOM files")
+    parser.add_argument("output", help="output VTI or VTK.JS")
+    parser.add_argument("--no_compress", action="store_true", help="Do not compress")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite output")
 
-    exit(exitCode)
+    args = parser.parse_args()
+
+    convertDICOMVolumeToVTKFile(args.DICOM, args.output, overwrite=args.overwrite, compress=not args.no_compress)
