@@ -16,7 +16,7 @@ from itk_utils import convertITKTypeToVTKType, getMetadata, getMetadataList
 
 def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
                                 overwrite=False,
-                                compress=True, blockSize=50 * 1024 * 1024):
+                                compress=True, blockSize=10 * 1024 * 1024):
     """
     Converts DICOM files in a directory into a VTK file (.vti or .vtkjs)
     """
@@ -160,11 +160,21 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
         for _, _, f in os.walk(data_path):
             for file in f:
                 full_path = os.path.join(data_path, file)
-                with open(full_path, 'rb') as f_in, gzip.open(full_path + '.gz', 'wb') as f_out:
+                with open(full_path, 'rb') as f_in:
+                    as16bits = numpy.fromfile(f_in, numpy.dtype('uint8'))
+                    one_uint8, two_uint8, three_uint8, four_uint8 = numpy.reshape(
+                        as16bits, (as16bits.shape[0] // 4, 4)).astype(numpy.uint8).T
+                    fst_uint12 = (one_uint8 << 4) + (two_uint8 >> 4)
+                    snd_uint12 = (two_uint8 << 4) + three_uint8 # %16
+                    thr_uint12 = four_uint8
+                    as12bits = numpy.reshape(numpy.concatenate(
+                        (fst_uint12[:, None], snd_uint12[:, None], thr_uint12[:, None]), axis=1), 3 * fst_uint12.shape[0])
+                    as12bits.tofile(full_path + '.as12bits')
+                with open(full_path  + '.as12bits', 'rb') as f_in, gzip.open(full_path + '.gz', 'wb') as f_out:
                     shutil.copyfileobj(f_in, f_out)
                     f_in.close()
                     f_out.close()
-                    os.replace(full_path + '.gz', full_path)
+                    # os.replace(full_path + '.gz', full_path):
 
     return True
 
