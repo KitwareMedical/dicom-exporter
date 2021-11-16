@@ -1,5 +1,5 @@
-import vtk
 import itk
+import vtk
 
 def convertITKTypeToVTKType(ITKType):
     """Converts ITK scalar type to VTK scalar type"""
