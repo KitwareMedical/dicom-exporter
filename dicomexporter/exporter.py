@@ -6,8 +6,8 @@ import itk
 import numpy
 import vtk
 
-from dicom import createITKImageReader
-from itk_utils import convertITKTypeToVTKType, getMetadata, getMetadataList
+from .dicom import createITKImageReader
+from .itk_utils import convertITKTypeToVTKType, getMetadata, getMetadataList
 # To uncomment when running script manually
 # from helpers.DICOM import createITKImageReader
 # from helpers.itk import convertITKTypeToVTKType, getMetadata, getMetadataList
