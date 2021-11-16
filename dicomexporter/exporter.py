@@ -4,6 +4,7 @@ import shutil
 
 import itk
 import numpy
+from numpy.core.numeric import full
 import vtk
 
 from .dicom import createITKImageReader
@@ -14,15 +15,21 @@ from .itk_utils import convertITKTypeToVTKType, getMetadata, getMetadataList
 # from helpers.volume import VolumeData
 
 
-def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
-                                overwrite=False,
-                                compress=True, blockSize=50 * 1024 * 1024):
+def convertDICOMVolumeToVTKFile(
+        dicom_directory, 
+        output_file_path,
+        overwrite=False,
+        compress_gzip=True,
+        compress_12_bits=False,
+        blockSize=10 * 1024 * 1024
+    ):
     """
     Converts DICOM files in a directory into a VTK file (.vti or .vtkjs)
     """
     # Test output_file_path #
     if not overwrite and os.path.exists(output_file_path):
-        print('Output file already exist', output_file_path)
+        print('Output file already exist', output_file_path, 
+            '\nIf you want to overwrite the file add the \'--overwrite\' flag')
         return False, None
 
     itkReader = createITKImageReader(dicom_directory)
@@ -52,6 +59,12 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
     ]
 
     # Extract DICOM fields #
+    if compress_12_bits:
+        bits_stored = getMetadata(itkReader, '0028|0101', int)
+        if bits_stored != 12:
+            print('Data is not 12 bits but', bits_stored)
+            return False
+
     spacingBetweenSlices = getMetadata(itkReader, '0018|0088', float)
     position = getMetadataList(itkReader, '0020|0032', float)
     orientation = getMetadataList(itkReader, '0020|0037', float)
@@ -151,7 +164,7 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
     if file_extension == '.vti':
         writer = vtk.vtkXMLImageDataWriter()
         writer.SetDataModeToBinary()
-        if compress:
+        if compress_gzip:
             writer.SetCompressorTypeToZLib()
             writer.SetBlockSize(blockSize)
     else:
@@ -165,20 +178,37 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
     # Write file #
     writer.Write()
 
-    if compress and file_extension != '.vti':
+    if file_extension != '.vti' and (compress_gzip or compress_12_bits):
         data_path = os.path.join(output_file_path, 'data')
         for _, _, f in os.walk(data_path):
             for file in f:
                 full_path = os.path.join(data_path, file)
-                with open(full_path, 'rb') as f_in, gzip.open(full_path + '.gz', 'wb') as f_out:
-                    shutil.copyfileobj(f_in, f_out)
-                    f_in.close()
-                    f_out.close()
-                    os.replace(full_path + '.gz', full_path)
+                temp_path = full_path
+                
+                if compress_12_bits:
+                    with open(full_path, 'rb') as f_in:
+                        as16bits = numpy.fromfile(f_in, numpy.dtype('uint8'))
+                        one_uint8, two_uint8, three_uint8, four_uint8 = numpy.reshape(
+                            as16bits, (as16bits.shape[0] // 4, 4)).astype(numpy.uint8).T
+                        fst_uint12 = (one_uint8 << 4) + (two_uint8 >> 4)
+                        snd_uint12 = (two_uint8 << 4) + three_uint8 # %16
+                        thr_uint12 = four_uint8
+                        as12bits = numpy.reshape(numpy.concatenate(
+                            (fst_uint12[:, None], snd_uint12[:, None], thr_uint12[:, None]), axis=1), 3 * fst_uint12.shape[0])
+                        temp_path = full_path + '.as12bits'
+                        as12bits.tofile(temp_path)
+                
+                if compress_gzip:
+                    with open(temp_path, 'rb') as f_in, gzip.open(full_path + '.gz', 'wb') as f_out:
+                        shutil.copyfileobj(f_in, f_out)
+                        f_in.close()
+                        f_out.close()
+                        os.replace(full_path + '.gz', full_path)
+                
+                if compress_12_bits:
+                    os.remove(temp_path)
 
     return True
-
-
 
 def main():
     import argparse
@@ -186,9 +216,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("DICOM", help="a directory containing DICOM files")
     parser.add_argument("output", help="output VTI or VTK.JS")
+    parser.add_argument("--no-compress", action="store_true", help="Compression with gzip/ZLib")
     parser.add_argument("--compress-12-bits", action="store_true", help="Compress to 12 bits")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite output")
 
     args = parser.parse_args()
-    
-    convertDICOMVolumeToVTKFile(args.DICOM, args.output, overwrite=args.overwrite, compress=args.compress_12_bits)
+
+    convertDICOMVolumeToVTKFile(args.DICOM, args.output, overwrite=args.overwrite, compress_gzip=not args.no_compress, compress_12_bits=args.compress_12_bits)
