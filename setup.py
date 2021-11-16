@@ -27,5 +27,5 @@ setup(
             'dicom-exporter = dicomexporter.exporter:main'
         ]
     },
-    install_requires=[],
+    install_requires=['itk', 'vtk', 'numpy'],
 )
