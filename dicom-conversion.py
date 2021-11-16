@@ -60,6 +60,13 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
     window_center = getMetadata(itkReader, '0028|1050', float)
     print("w: {}, c: {}".format(window_width, window_center))
 
+    window_level = vtk.vtkFieldData()
+    window_level_array = vtk.vtkFloatArray()
+    window_level_array.SetName('window_level')
+    window_level_array.SetNumberOfComponents(2)
+    window_level_array.InsertNextTuple((window_center, window_width))
+    window_level.AddArray(window_level_array)
+
     # Compute spacing #
     if spacingBetweenSlices and spacingXY:
         spacing = spacingXY + [spacingBetweenSlices]
@@ -135,6 +142,9 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
     else:
         # Generate processed volume data #
         processedVolumeData = originalVolumeData
+
+    # Set Field Data #
+    processedVolumeData.SetFieldData(window_level)
 
     # Create writer #
     filename, file_extension = path.splitext(output_file_path)
