@@ -1,13 +1,13 @@
-from os import path
 import gzip
-import sys
-import itk
+import os
 import shutil
+
+import itk
 import numpy
 import vtk
 
-from dicom import createITKImageReader
-from itk_utils import convertITKTypeToVTKType, getMetadata, getMetadataList
+from .dicom import createITKImageReader
+from .itk_utils import convertITKTypeToVTKType, getMetadata, getMetadataList
 # To uncomment when running script manually
 # from helpers.DICOM import createITKImageReader
 # from helpers.itk import convertITKTypeToVTKType, getMetadata, getMetadataList
@@ -21,7 +21,7 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
     Converts DICOM files in a directory into a VTK file (.vti or .vtkjs)
     """
     # Test output_file_path #
-    if not overwrite and path.exists(output_file_path):
+    if not overwrite and os.path.exists(output_file_path):
         print('Output file already exist', output_file_path)
         return False, None
 
@@ -53,12 +53,12 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
 
     # Extract DICOM fields #
     spacingBetweenSlices = getMetadata(itkReader, '0018|0088', float)
-    spacingXY = getMetadataList(itkReader, '0028|0030', float)
-    orientation = getMetadataList(itkReader, '0020|0037', float)
     position = getMetadataList(itkReader, '0020|0032', float)
-    window_width = getMetadata(itkReader, '0028|1051', float)
+    orientation = getMetadataList(itkReader, '0020|0037', float)
+    spacingXY = getMetadataList(itkReader, '0028|0030', float)
+    
     window_center = getMetadata(itkReader, '0028|1050', float)
-    print("w: {}, c: {}".format(window_width, window_center))
+    window_width = getMetadata(itkReader, '0028|1051', float)
 
     window_level = vtk.vtkFieldData()
     window_level_array = vtk.vtkFloatArray()
@@ -147,7 +147,7 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
     processedVolumeData.SetFieldData(window_level)
 
     # Create writer #
-    filename, file_extension = path.splitext(output_file_path)
+    _, file_extension = os.path.splitext(output_file_path)
     if file_extension == '.vti':
         writer = vtk.vtkXMLImageDataWriter()
         writer.SetDataModeToBinary()
@@ -180,19 +180,15 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
 
 
 
-if __name__ == '__main__':
-    """
-    Script entry point
-    """
+def main():
     import argparse
-    import os
 
     parser = argparse.ArgumentParser()
     parser.add_argument("DICOM", help="a directory containing DICOM files")
     parser.add_argument("output", help="output VTI or VTK.JS")
-    parser.add_argument("--no_compress", action="store_true", help="Do not compress")
+    parser.add_argument("--compress-12-bits", action="store_true", help="Compress to 12 bits")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite output")
 
     args = parser.parse_args()
-
-    convertDICOMVolumeToVTKFile(args.DICOM, args.output, overwrite=args.overwrite, compress=not args.no_compress)
+    
+    convertDICOMVolumeToVTKFile(args.DICOM, args.output, overwrite=args.overwrite, compress=args.compress_12_bits)
