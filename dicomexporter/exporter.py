@@ -190,18 +190,15 @@ def convertDICOMVolumeToVTKFile(dicom_directory, output_file_path,
 
 
 
-if __name__ == '__main__':
-    """
-    Script entry point
-    """
+def main():
     import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("DICOM", help="a directory containing DICOM files")
     parser.add_argument("output", help="output VTI or VTK.JS")
-    parser.add_argument("--no_compress", action="store_true", help="Do not compress")
+    parser.add_argument("--compress-12-bits", action="store_true", help="Compress to 12 bits")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite output")
 
     args = parser.parse_args()
-
-    convertDICOMVolumeToVTKFile(args.DICOM, args.output, overwrite=args.overwrite, compress=not args.no_compress)
+    
+    convertDICOMVolumeToVTKFile(args.DICOM, args.output, overwrite=args.overwrite, compress=args.compress_12_bits)
