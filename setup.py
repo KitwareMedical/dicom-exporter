@@ -24,7 +24,7 @@ setup(
     packages=find_packages(),
     entry_points={
         'console_scripts': [
-            'dicom-exporter = dicomexporter.exporter:main'
+            'dicom-exporter = dicomexporter.exporter:cli'
         ]
     },
     install_requires=['itk', 'vtk', 'numpy'],
