@@ -14,8 +14,12 @@ from .itk_utils import convertITKTypeToVTKType, getMetadata, getMetadataList
 # from helpers.volume import VolumeData
 
 
+def firstFloat(v):
+  return float(v.split('\\')[0])
+
+
 def convertDICOMVolumeToVTKFile(
-        dicom_directory, 
+        dicom_directory,
         output_file_path,
         overwrite=False,
         compress=True,
@@ -27,7 +31,7 @@ def convertDICOMVolumeToVTKFile(
     """
     # Test output_file_path #
     if not overwrite and os.path.exists(output_file_path):
-        print('Output file already exist', output_file_path, 
+        print('Output file already exist', output_file_path,
             '\nIf you want to overwrite the file add the \'--overwrite\' flag')
         return False, None
 
@@ -63,9 +67,9 @@ def convertDICOMVolumeToVTKFile(
     position = getMetadataList(itkReader, '0020|0032', float)
     orientation = getMetadataList(itkReader, '0020|0037', float)
     spacingXY = getMetadataList(itkReader, '0028|0030', float)
-    
-    window_center = getMetadata(itkReader, '0028|1050', float)
-    window_width = getMetadata(itkReader, '0028|1051', float)
+
+    window_center = getMetadata(itkReader, '0028|1050', firstFloat)
+    window_width = getMetadata(itkReader, '0028|1051', firstFloat)
 
     window_level = vtk.vtkFieldData()
     window_level_array = vtk.vtkFloatArray()
@@ -177,7 +181,7 @@ def convertDICOMVolumeToVTKFile(
         for full_path in iterFilePaths(data_path):
             if convert_12_bits and bits_stored == 12: # we also check if the input file is in 12 bits
                 convertFileTo12Bits(full_path)
-                
+
             if compress:
                 compressWithGzip(full_path)
 
