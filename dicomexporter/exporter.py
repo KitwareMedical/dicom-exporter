@@ -220,4 +220,3 @@ def compressWithGzip(file_path):
         shutil.copyfileobj(f_in, f_out)
         f_in.close()
         f_out.close()
-    os.replace(file_path + '.gz', file_path)
