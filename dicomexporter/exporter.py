@@ -57,10 +57,20 @@ def convertDICOMVolumeToVTKFile(
         return False, None
 
     # Test output_file_path #
-    if not overwrite and os.path.exists(output_file_path):
-        print('Output file already exist', output_file_path, 
-            '\nIf you want to overwrite the file add the \'--overwrite\' flag')
-        return False, None
+    if os.path.exists(output_file_path):
+        if not overwrite:
+            print(
+                'Output file already exist',
+                output_file_path,
+                '\nIf you want to overwrite the file add the \'--overwrite\' flag',
+            )
+            return False, None
+        
+        if file_extension == ALLOWED_EXTENSIONS.vti:
+            os.unlink(output_file_path)
+        elif file_extension == ALLOWED_EXTENSIONS.vtkjs:
+            shutil.rmtree(output_file_path)
+
 
     itkReader = createITKImageReader(dicom_directory)
     volume = itkReader.GetOutput() if itkReader is not None else None
