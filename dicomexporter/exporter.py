@@ -37,8 +37,12 @@ def extractExtensionsFromFilePath(path):
     return path_without_extensions, extensions
 
 
+def firstFloat(v):
+  return float(v.split('\\')[0])
+
+
 def convertDICOMVolumeToVTKFile(
-        dicom_directory, 
+        dicom_directory,
         output_file_path,
         overwrite=False,
         compress=True,
@@ -65,7 +69,7 @@ def convertDICOMVolumeToVTKFile(
                 '\nIf you want to overwrite the file add the \'--overwrite\' flag',
             )
             return False, None
-        
+
         if file_extension == ALLOWED_EXTENSIONS.vti:
             os.unlink(output_file_path)
         elif file_extension == ALLOWED_EXTENSIONS.vtkjs:
@@ -105,8 +109,8 @@ def convertDICOMVolumeToVTKFile(
     orientation = getMetadataList(itkReader, '0020|0037', float)
     spacingXY = getMetadataList(itkReader, '0028|0030', float)
 
-    window_center = getMetadata(itkReader, '0028|1050', float)
-    window_width = getMetadata(itkReader, '0028|1051', float)
+    window_center = getMetadata(itkReader, '0028|1050', firstFloat)
+    window_width = getMetadata(itkReader, '0028|1051', firstFloat)
 
     window_level = vtk.vtkFieldData()
     window_level_array = vtk.vtkFloatArray()
