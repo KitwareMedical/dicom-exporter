@@ -52,6 +52,8 @@ def convertDICOMVolumeToVTKFile(
     """
     Converts DICOM files in a directory into a VTK file (.vti or .vtkjs)
     """
+    itk.DataObject.GlobalReleaseDataFlagOn()
+
     _, file_extensions = extractExtensionsFromFilePath(output_file_path)
     # only handling single file_extensions for now
     file_extension = file_extensions[-1] if len(file_extensions) > 0 else ''
@@ -83,65 +85,21 @@ def convertDICOMVolumeToVTKFile(
         print('Failed to read DICOM volume', dicom_directory, output_file_path)
         return False, None
 
-    # Test volume data type #
-    ITKType = itk.template(volume)[1][0]
-    volumeDataType = convertITKTypeToVTKType(ITKType)
-
-    if not volumeDataType:
-        print('Data type not handled', ITKType)
-        return False, None
-
-    # Extract volume parameters #
-    volumeSize = list(volume.GetLargestPossibleRegion().GetSize())
-    volumeOrigin = list(volume.GetOrigin())
-    volumeSpacing = list(volume.GetSpacing())
-    volumeComponents = volume.GetNumberOfComponentsPerPixel()
-    volumeExtent = [
-        0, volumeSize[0] - 1,
-        0, volumeSize[1] - 1,
-        0, volumeSize[2] - 1,
-    ]
-
     # Extract DICOM fields #
     bits_stored = getMetadata(itkReader, '0028|0101', int)
-    spacingBetweenSlices = getMetadata(itkReader, '0018|0088', float)
     position = getMetadataList(itkReader, '0020|0032', float)
     orientation = getMetadataList(itkReader, '0020|0037', float)
     spacingXY = getMetadataList(itkReader, '0028|0030', float)
 
     window_center = getMetadata(itkReader, '0028|1050', firstFloat)
     window_width = getMetadata(itkReader, '0028|1051', firstFloat)
-
-    window_level = vtk.vtkFieldData()
-    window_level_array = vtk.vtkFloatArray()
-    window_level_array.SetName('window_level')
-    window_level_array.SetNumberOfComponents(2)
-    window_level_array.InsertNextTuple((window_center, window_width))
-    window_level.AddArray(window_level_array)
-
-    # Compute spacing #
-    if spacingBetweenSlices and spacingXY:
-        spacing = spacingXY + [spacingBetweenSlices]
-    else:
-        spacing = volumeSpacing
+    del itkReader
 
     # Get original volume data #
-    data = itk.GetArrayViewFromImage(volume).tostring()
+    volumeData = itk.vtk_image_from_image(volume)
+    del volume
 
-    dataImporter = vtk.vtkImageImport()
-    dataImporter.CopyImportVoidPointer(data, len(data))
-
-    dataImporter.SetDataExtent(volumeExtent)
-    dataImporter.SetWholeExtent(volumeExtent)
-    dataImporter.SetDataOrigin(volumeOrigin)
-    dataImporter.SetDataScalarType(volumeDataType)
-    dataImporter.SetDataSpacing(spacing)
-    dataImporter.SetNumberOfScalarComponents(volumeComponents)
-
-    dataImporter.Update()
-
-    originalVolumeData = dataImporter.GetOutput()
-    originalVolumeData.SetOrigin((0, 0, 0))
+    volumeData.SetOrigin((0, 0, 0))
 
     # Compute volume data #
     if orientation and position:
@@ -184,19 +142,23 @@ def convertDICOMVolumeToVTKFile(
 
         # Slice volume data #
         reSliceFilter = vtk.vtkImageReslice()
-
-        reSliceFilter.SetInputData(originalVolumeData)
+        reSliceFilter.SetInputData(volumeData)
         reSliceFilter.SetResliceAxes(reSliceMatrix)
         reSliceFilter.Update()
 
-        processedVolumeData = reSliceFilter.GetOutput()
-
-    else:
-        # Generate processed volume data #
-        processedVolumeData = originalVolumeData
+        volumeData = reSliceFilter.GetOutput()
+        volumeData.ShallowCopy(reSliceFilter.GetOutput())
 
     # Set Field Data #
-    processedVolumeData.SetFieldData(window_level)
+    window_level = vtk.vtkFieldData()
+    window_level_array = vtk.vtkFloatArray()
+    window_level_array.SetName('window_level')
+    window_level_array.SetNumberOfComponents(2)
+    window_level_array.InsertNextTuple((window_center, window_width))
+    window_level.AddArray(window_level_array)
+    volumeData.SetFieldData(window_level)
+    del window_level
+    del window_level_array
 
     # Create writer #
     if file_extension == ALLOWED_EXTENSIONS.vti:
@@ -211,10 +173,12 @@ def convertDICOMVolumeToVTKFile(
     writer.SetFileName(output_file_path)
 
     # Set writer volume data #
-    writer.SetInputData(processedVolumeData)
+    writer.SetInputData(volumeData)
 
     # Write file #
     writer.Write()
+    del volumeData
+    del writer
 
     if file_extension == ALLOWED_EXTENSIONS.vtkjs and (compress or convert_12_bits):
         data_path = os.path.join(output_file_path, 'data')
