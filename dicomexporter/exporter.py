@@ -146,7 +146,6 @@ def convertDICOMVolumeToVTKFile(
         reSliceFilter.SetResliceAxes(reSliceMatrix)
         reSliceFilter.Update()
 
-        volumeData = reSliceFilter.GetOutput()
         volumeData.ShallowCopy(reSliceFilter.GetOutput())
 
     # Set Field Data #
