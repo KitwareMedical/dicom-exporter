@@ -47,6 +47,7 @@ def convertDICOMVolumeToVTKFile(
         overwrite=False,
         compress=True,
         convert_12_bits=False,
+        resample=False,
         blockSize=10 * 1024 * 1024
     ):
     """
@@ -99,54 +100,57 @@ def convertDICOMVolumeToVTKFile(
     volumeData = itk.vtk_image_from_image(volume)
     del volume
 
-    volumeData.SetOrigin((0, 0, 0))
-
     # Compute volume data #
-    if orientation and position:
-        # Compute transform matrix #
-        # X direction #
-        orientationX = orientation[0: 3]
-        directionXIndex = orientationX.index(max(orientationX, key=abs))
-        directionX = [0, 0, 0]
+    if resample:
+        # Set origin to 0
+        volumeData.SetOrigin((0, 0, 0))
+        if orientation and position:
+            # Compute transform matrix #
+            # X direction #
+            orientationX = orientation[0: 3]
+            directionXIndex = orientationX.index(max(orientationX, key=abs))
+            directionX = [0, 0, 0]
 
-        if orientationX[directionXIndex] > 0:
-            directionX[directionXIndex] = 1
-        else:
-            directionX[directionXIndex] = -1
+            if orientationX[directionXIndex] > 0:
+                directionX[directionXIndex] = 1
+            else:
+                directionX[directionXIndex] = -1
 
-        # Y direction #
-        orientationY = orientation[3: 6]
-        directionYIndex = orientationY.index(max(orientationY, key=abs))
-        directionY = [0, 0, 0]
+            # Y direction #
+            orientationY = orientation[3: 6]
+            directionYIndex = orientationY.index(max(orientationY, key=abs))
+            directionY = [0, 0, 0]
 
-        if orientationY[directionYIndex] > 0:
-            directionY[directionYIndex] = 1
-        else:
-            directionY[directionYIndex] = -1
+            if orientationY[directionYIndex] > 0:
+                directionY[directionYIndex] = 1
+            else:
+                directionY[directionYIndex] = -1
 
-        # Z direction #
-        directionZ = tuple(numpy.cross(directionX, directionY))
+            # Z direction #
+            directionZ = tuple(numpy.cross(directionX, directionY))
 
-        # Transformation matrix #
-        transformationMatrix = [
-            directionX[0], directionY[0], directionZ[0], position[0],
-            directionX[1], directionY[1], directionZ[1], position[1],
-            directionX[2], directionY[2], directionZ[2], position[2],
-            0, 0, 0, 1,
-        ]
+            # Transformation matrix #
+            transformationMatrix = [
+                directionX[0], directionY[0], directionZ[0], position[0],
+                directionX[1], directionY[1], directionZ[1], position[1],
+                directionX[2], directionY[2], directionZ[2], position[2],
+                0, 0, 0, 1,
+            ]
 
-        reSliceMatrix = vtk.vtkMatrix4x4()
+            reSliceMatrix = vtk.vtkMatrix4x4()
 
-        reSliceMatrix.DeepCopy(transformationMatrix)
-        reSliceMatrix.Invert()
+            reSliceMatrix.DeepCopy(transformationMatrix)
+            reSliceMatrix.Invert()
 
-        # Slice volume data #
-        reSliceFilter = vtk.vtkImageReslice()
-        reSliceFilter.SetInputData(volumeData)
-        reSliceFilter.SetResliceAxes(reSliceMatrix)
-        reSliceFilter.Update()
+            # Slice volume data #
+            reSliceFilter = vtk.vtkImageReslice()
+            reSliceFilter.SetInputData(volumeData)
+            reSliceFilter.SetResliceAxes(reSliceMatrix)
+            reSliceFilter.Update()
 
-        volumeData.ShallowCopy(reSliceFilter.GetOutput())
+            volumeData.ShallowCopy(reSliceFilter.GetOutput())
+        # Set direction matrix to identity
+        volumeData.SetDirectionMatrix(vtk.vtkMatrix3x3())
 
     # Set Field Data #
     window_level = vtk.vtkFieldData()
