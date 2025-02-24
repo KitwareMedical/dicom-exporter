@@ -7,11 +7,12 @@ import numpy
 import vtk
 
 from .dicom import createITKImageReader
-from .itk_utils import convertITKTypeToVTKType, getMetadata, getMetadataList
+from .itk_utils import getMetadata, getMetadataList
 # To uncomment when running script manually
 # from helpers.DICOM import createITKImageReader
 # from helpers.itk import convertITKTypeToVTKType, getMetadata, getMetadataList
 # from helpers.volume import VolumeData
+
 
 class IterableEnum(type):
     def __iter__(self):
@@ -38,59 +39,30 @@ def extractExtensionsFromFilePath(path):
 
 
 def firstFloat(v):
-  return float(v.split('\\')[0])
+    return float(v.split('\\')[0])
 
 
-def convertDICOMVolumeToVTKFile(
+def readDICOMVolume(
         dicom_directory,
-        output_file_path,
-        overwrite=False,
-        compress=True,
-        convert_12_bits=False,
-        resample=False,
-        blockSize=10 * 1024 * 1024
-    ):
+        resample=False
+        ):
     """
     Converts DICOM files in a directory into a VTK file (.vti or .vtkjs)
     """
     itk.DataObject.GlobalReleaseDataFlagOn()
 
-    _, file_extensions = extractExtensionsFromFilePath(output_file_path)
-    # only handling single file_extensions for now
-    file_extension = file_extensions[-1] if len(file_extensions) > 0 else ''
-
-    if not file_extension in ALLOWED_EXTENSIONS:
-        print('Unknown file extension \'' + file_extension + '\'')
-        return False, None
-
-    # Test output_file_path #
-    if os.path.exists(output_file_path):
-        if not overwrite:
-            print(
-                'Output file already exist',
-                output_file_path,
-                '\nIf you want to overwrite the file add the \'--overwrite\' flag',
-            )
-            return False, None
-
-        if file_extension == ALLOWED_EXTENSIONS.vti:
-            os.unlink(output_file_path)
-        elif file_extension == ALLOWED_EXTENSIONS.vtkjs:
-            shutil.rmtree(output_file_path)
-
-
     itkReader = createITKImageReader(dicom_directory)
     volume = itkReader.GetOutput() if itkReader is not None else None
 
     if volume is None:
-        print('Failed to read DICOM volume', dicom_directory, output_file_path)
-        return False, None
+        print('Failed to read DICOM volume', dicom_directory)
+        return None
 
     # Extract DICOM fields #
     bits_stored = getMetadata(itkReader, '0028|0101', int)
     position = getMetadataList(itkReader, '0020|0032', float)
     orientation = getMetadataList(itkReader, '0020|0037', float)
-    spacingXY = getMetadataList(itkReader, '0028|0030', float)
+    # spacingXY = getMetadataList(itkReader, '0028|0030', float)
 
     window_center = getMetadata(itkReader, '0028|1050', firstFloat)
     window_width = getMetadata(itkReader, '0028|1051', firstFloat)
@@ -163,6 +135,49 @@ def convertDICOMVolumeToVTKFile(
     del window_level
     del window_level_array
 
+    return volumeData, bits_stored
+
+def convertDICOMVolumeToVTKFile(
+        dicom_directory,
+        output_file_path,
+        overwrite=False,
+        compress=True,
+        convert_12_bits=False,
+        resample=False,
+        blockSize=10 * 1024 * 1024
+        ):
+    """
+    Converts DICOM files in a directory into a VTK file (.vti or .vtkjs)
+    """
+    itk.DataObject.GlobalReleaseDataFlagOn()
+
+    _, file_extensions = extractExtensionsFromFilePath(output_file_path)
+    # only handling single file_extensions for now
+    file_extension = file_extensions[-1] if len(file_extensions) > 0 else ''
+
+    if file_extension not in ALLOWED_EXTENSIONS:
+        print('Unknown file extension \'' + file_extension + '\'')
+        return False, None
+
+    # Test output_file_path #
+    if os.path.exists(output_file_path):
+        if not overwrite:
+            print(
+                'Output file already exist',
+                output_file_path,
+                '\nIf you want to overwrite the file add the \'--overwrite\' flag',
+            )
+            return False, None
+
+        if file_extension == ALLOWED_EXTENSIONS.vti:
+            os.unlink(output_file_path)
+        elif file_extension == ALLOWED_EXTENSIONS.vtkjs:
+            shutil.rmtree(output_file_path)
+
+    # Extract DICOM fields #
+    volumeData, bits_stored = readDICOMVolume(dicom_directory,
+                                              resample=resample)
+
     # Create writer #
     if file_extension == ALLOWED_EXTENSIONS.vti:
         writer = vtk.vtkXMLImageDataWriter()
@@ -171,7 +186,7 @@ def convertDICOMVolumeToVTKFile(
             writer.SetCompressorTypeToZLib()
             writer.SetBlockSize(blockSize)
         writer.SetFileName(output_file_path)
-    else: # vtkjs
+    else:  # vtkjs
         writer = vtk.vtkJSONDataSetWriter()
         writer.GetArchiver().SetArchiveName(output_file_path)
 
@@ -186,7 +201,7 @@ def convertDICOMVolumeToVTKFile(
     if file_extension == ALLOWED_EXTENSIONS.vtkjs and (compress or convert_12_bits):
         data_path = os.path.join(output_file_path, 'data')
         for full_path in iterFilePaths(data_path):
-            if convert_12_bits and bits_stored == 12: # we also check if the input file is in 12 bits
+            if convert_12_bits and bits_stored == 12:  # we also check if the input file is in 12 bits
                 convertFileTo12Bits(full_path)
 
             if compress:
