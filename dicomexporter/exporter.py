@@ -1,6 +1,9 @@
 import gzip
+import logging
 import os
+import re
 import shutil
+from pathlib import Path
 
 import itk
 import numpy
@@ -13,6 +16,9 @@ from .itk_utils import getMetadata, getMetadataList
 # from helpers.itk import convertITKTypeToVTKType, getMetadata, getMetadataList
 # from helpers.volume import VolumeData
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("VTKLogger")
+
 
 class IterableEnum(type):
     def __iter__(self):
@@ -24,6 +30,10 @@ class IterableEnum(type):
 class ALLOWED_EXTENSIONS(metaclass=IterableEnum):
     vti = 'vti'
     vtkjs = 'vtkjs'
+    png = 'png'
+    jpg = 'jpg'
+    nii = 'nii'
+    img = 'img' # Nifti img/hdr pair
 
 
 def extractExtensionsFromFilePath(path):
@@ -137,6 +147,51 @@ def readDICOMVolume(
 
     return volumeData, bits_stored
 
+
+def delete_with_suffix(path: str, suffix: str = None, overwrite: bool = True):
+    """
+    Delete a file/folder and optionally its suffixed variants in the same directory.
+    
+    Args:
+        path (str): Absolute path to the base file/folder.
+        suffix (str, optional): 
+            - None: delete only the exact file/folder
+            - "_": delete the exact file/folder and any with suffix starting with "_"
+        overwrite (bool): If False, it does not delete the file but print a warning.
+    """
+    base_path = Path(path).resolve()
+    directory = base_path.parent
+    stem = base_path.stem
+    extension = base_path.suffix
+
+    if suffix is None:
+        # Exact match only
+        regex = rf"^{re.escape(stem)}{re.escape(extension)}$"
+    else:
+        # Match exact + suffix variants
+        regex = rf"^{re.escape(stem)}(?:{re.escape(suffix)}.+)?{re.escape(extension)}$"
+
+    pattern = re.compile(regex)
+
+    for f in directory.iterdir():
+        if pattern.match(f.name):
+            if overwrite is False:
+                logger.error(f" Would delete: {f}")
+                return False
+            else:
+                try:
+                    if f.is_file():
+                        f.unlink()
+                        logger.debug(f"Deleted file: {f}")
+                    elif f.is_dir():
+                        shutil.rmtree(f)
+                        logger.debug(f"Deleted directory: {f}")
+                except Exception as e:
+                    logger.error(f"Error deleting {f}: {e}")
+                    return False
+    return True
+
+
 def convertDICOMVolumeToVTKFile(
         dicom_directory,
         output_file_path,
@@ -144,10 +199,15 @@ def convertDICOMVolumeToVTKFile(
         compress=True,
         convert_12_bits=False,
         resample=False,
-        blockSize=10 * 1024 * 1024
+        blockSize=10 * 1024 * 1024,
+        slices=[],
+        apply_window_level=False
         ):
     """
     Converts DICOM files in a directory into a VTK file (.vti or .vtkjs)
+    slices: list of slice indexes to export (only for png/jpg), empty to
+    export all slices. if values are floats, then they represent a percentage
+    of the volume depth. (0.5 = middle slice)
     """
     itk.DataObject.GlobalReleaseDataFlagOn()
 
@@ -156,23 +216,18 @@ def convertDICOMVolumeToVTKFile(
     file_extension = file_extensions[-1] if len(file_extensions) > 0 else ''
 
     if file_extension not in ALLOWED_EXTENSIONS:
-        print('Unknown file extension \'' + file_extension + '\'')
+        logger.error('Unknown file extension \'' + file_extension + '\'')
         return False, None
 
     # Test output_file_path #
-    if os.path.exists(output_file_path):
-        if not overwrite:
-            print(
-                'Output file already exist',
-                output_file_path,
-                '\nIf you want to overwrite the file add the \'--overwrite\' flag',
-            )
-            return False, None
-
-        if file_extension == ALLOWED_EXTENSIONS.vti:
-            os.unlink(output_file_path)
-        elif file_extension == ALLOWED_EXTENSIONS.vtkjs:
-            shutil.rmtree(output_file_path)
+    may_have_suffix = ('_'
+                       if file_extension in [ALLOWED_EXTENSIONS.png,
+                                             ALLOWED_EXTENSIONS.jpg]
+                       else None)
+    suffix = may_have_suffix if len(slices) != 1 else None
+    cleared = delete_with_suffix(output_file_path, may_have_suffix, overwrite)
+    if not cleared:
+        return False, 'Output path could not be cleared'
 
     # Extract DICOM fields #
     volumeData, bits_stored = readDICOMVolume(dicom_directory,
@@ -186,15 +241,83 @@ def convertDICOMVolumeToVTKFile(
             writer.SetCompressorTypeToZLib()
             writer.SetBlockSize(blockSize)
         writer.SetFileName(output_file_path)
-    else:  # vtkjs
+    elif file_extension == ALLOWED_EXTENSIONS.vtkjs:
         writer = vtk.vtkJSONDataSetWriter()
         writer.GetArchiver().SetArchiveName(output_file_path)
+    elif file_extension in [ALLOWED_EXTENSIONS.nii, ALLOWED_EXTENSIONS.img]:
+        writer = vtk.vtkNIFTIImageWriter()
+        m4 = vtk.vtkMatrix4x4()
+        [m4.SetElement(i, j, volumeData.GetDirectionMatrix().GetElement(i, j)) for i in range(3) for j in range(3)]
 
-    # Set writer volume data #
-    writer.SetInputData(volumeData)
+        writer.SetQFormMatrix(m4)
+        writer.SetSFormMatrix(m4)
+        writer.SetFileName(output_file_path)
+    elif file_extension == ALLOWED_EXTENSIONS.png:
+        writer = vtk.vtkPNGWriter()
+    elif file_extension == ALLOWED_EXTENSIONS.jpg:
+        writer = vtk.vtkJPEGWriter()
 
     # Write file #
-    writer.Write()
+    if file_extension in [ALLOWED_EXTENSIONS.png, ALLOWED_EXTENSIONS.jpg]:
+        input = volumeData
+        # Extract slice
+        extractVOI = vtk.vtkExtractVOI()
+        if apply_window_level:
+            window_level_array = volumeData.GetFieldData().GetArray(
+                'window_level')
+
+            # Get the first tuple (we stored window_center, window_width)
+            window_center, window_width = window_level_array.GetTuple2(0)
+            shift = - (window_center - window_width / 2)
+            scale = 255.0 / window_width
+            logger.info(f"Apply window level "
+                        f"W:{window_center}, L:{window_width}")
+
+            rescaler = vtk.vtkImageShiftScale()
+            rescaler.SetInputData(input)
+            rescaler.SetOutputScalarTypeToUnsignedChar()
+            rescaler.SetShift(shift)
+            rescaler.SetScale(scale)
+            rescaler.ClampOverflowOn()
+
+            reslice = vtk.vtkImageReslice()
+            reslice.SetInputConnection(rescaler.GetOutputPort())
+            reslice.SetOutputSpacing(volumeData.GetSpacing()[0],
+                                     -volumeData.GetSpacing()[1], # flip Y
+                                     volumeData.GetSpacing()[2])
+            # reslice.Update()
+            extractVOI.SetInputConnection(reslice.GetOutputPort())
+        else:
+            extractVOI.SetInputData(volumeData)
+
+        writer.SetInputConnection(extractVOI.GetOutputPort())
+
+        base, ext = os.path.splitext(output_file_path)
+        pattern = f"{base}{suffix}%04d{ext}"
+
+        extent = volumeData.GetExtent()
+        dimension = extent[5] - extent[4] + 1
+        int_slices = [slice if isinstance(slice, int) else
+                      int(slice * dimension) for slice in slices]
+
+        # Write slice by slice
+        for i in range(extent[4], extent[5] + 1):
+            if slices and i not in int_slices:
+                continue
+            writer.SetFileName(pattern % i if suffix else output_file_path)
+
+            extractVOI.SetVOI(extent[0], extent[1], extent[2], extent[3], i, i)
+            extractVOI.Update()
+
+            # Write slice
+            writer.Write()
+
+        del extractVOI
+    else:
+        # Set writer volume data #
+        writer.SetInputData(volumeData)
+        writer.Write()
+
     del volumeData
     del writer
 
